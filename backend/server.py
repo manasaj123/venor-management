@@ -1,75 +1,161 @@
-from fastapi import FastAPI, APIRouter
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
 import os
-import logging
-from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
 import uuid
 from datetime import datetime
+import pymongo
+from pymongo import MongoClient
 
-
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
-
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-
-# Create the main app without a prefix
 app = FastAPI()
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
-
-
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
-
-# Include the router in the main app
-app.include_router(api_router)
-
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# MongoDB connection
+MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017/vendordb')
+client = MongoClient(MONGO_URL)
+db = client.vendordb
+vendors_collection = db.vendors
+counter_collection = db.counters
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+# Initialize vendor counter
+def initialize_counter():
+    if counter_collection.find_one({"_id": "vendor_counter"}) is None:
+        counter_collection.insert_one({"_id": "vendor_counter", "sequence_value": 0})
+
+initialize_counter()
+
+def get_next_vendor_id():
+    counter = counter_collection.find_one_and_update(
+        {"_id": "vendor_counter"},
+        {"$inc": {"sequence_value": 1}},
+        return_document=pymongo.ReturnDocument.AFTER,
+        upsert=True
+    )
+    return f"VENDOR{counter['sequence_value']:03d}"
+
+# Pydantic models
+class VendorCreate(BaseModel):
+    company_name: str
+    contact_person: str
+    email: EmailStr
+    phone: str
+    street_address: str
+    city: str
+    postal_code: str
+    country: str
+    bank_name: str
+    account_number: str
+    iban: str
+    bic: str
+    documents: Optional[dict] = None
+
+class VendorResponse(BaseModel):
+    id: str
+    vendor_id: str
+    company_name: str
+    contact_person: str
+    email: str
+    phone: str
+    street_address: str
+    city: str
+    postal_code: str
+    country: str
+    bank_name: str
+    account_number: str
+    iban: str
+    bic: str
+    documents: Optional[dict] = None
+    status: str
+    created_at: datetime
+
+@app.get("/")
+async def root():
+    return {"message": "Vendor Management System API"}
+
+@app.get("/api/vendors")
+async def get_vendors():
+    try:
+        vendors = list(vendors_collection.find())
+        for vendor in vendors:
+            vendor["_id"] = str(vendor["_id"])
+        return {"vendors": vendors}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vendors")
+async def create_vendor(vendor: VendorCreate):
+    try:
+        vendor_id = get_next_vendor_id()
+        vendor_data = {
+            "id": str(uuid.uuid4()),
+            "vendor_id": vendor_id,
+            "company_name": vendor.company_name,
+            "contact_person": vendor.contact_person,
+            "email": vendor.email,
+            "phone": vendor.phone,
+            "street_address": vendor.street_address,
+            "city": vendor.city,
+            "postal_code": vendor.postal_code,
+            "country": vendor.country,
+            "bank_name": vendor.bank_name,
+            "account_number": vendor.account_number,
+            "iban": vendor.iban,
+            "bic": vendor.bic,
+            "documents": vendor.documents or {},
+            "status": "active",
+            "created_at": datetime.utcnow()
+        }
+        
+        result = vendors_collection.insert_one(vendor_data)
+        vendor_data["_id"] = str(result.inserted_id)
+        
+        return {"message": "Vendor created successfully", "vendor": vendor_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/vendors/{vendor_id}")
+async def get_vendor(vendor_id: str):
+    try:
+        vendor = vendors_collection.find_one({"vendor_id": vendor_id})
+        if not vendor:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+        vendor["_id"] = str(vendor["_id"])
+        return {"vendor": vendor}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/vendors/{vendor_id}")
+async def delete_vendor(vendor_id: str):
+    try:
+        result = vendors_collection.delete_one({"vendor_id": vendor_id})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Vendor not found")
+        return {"message": "Vendor deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/next-vendor-id")
+async def get_next_vendor_id_preview():
+    try:
+        # Get current counter without incrementing
+        counter = counter_collection.find_one({"_id": "vendor_counter"})
+        if counter:
+            next_id = f"VENDOR{counter['sequence_value'] + 1:03d}"
+        else:
+            next_id = "VENDOR001"
+        return {"next_vendor_id": next_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)
