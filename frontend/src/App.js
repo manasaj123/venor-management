@@ -6,8 +6,17 @@ const API_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001
 function App() {
   const [currentStep, setCurrentStep] = useState(1);
   const [vendors, setVendors] = useState([]);
+  const [filteredVendors, setFilteredVendors] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingVendor, setEditingVendor] = useState(null);
   const [nextVendorId, setNextVendorId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [filterOptions, setFilterOptions] = useState({ countries: [], statuses: [] });
+  const [stats, setStats] = useState({});
+
   const [formData, setFormData] = useState({
     company_name: '',
     contact_person: '',
@@ -29,7 +38,6 @@ function App() {
   });
 
   const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
 
   const countries = [
     'India', 'United States', 'United Kingdom', 'Germany', 'France', 
@@ -38,18 +46,65 @@ function App() {
 
   useEffect(() => {
     fetchVendors();
+    fetchStats();
   }, []);
+
+  useEffect(() => {
+    filterVendors();
+  }, [vendors, searchTerm, selectedCountry, selectedStatus]);
 
   const fetchVendors = async () => {
     try {
+      setLoading(true);
       const response = await fetch(`${API_BASE_URL}/api/vendors`);
       if (response.ok) {
         const data = await response.json();
         setVendors(data.vendors);
+        setFilterOptions(data.filter_options);
       }
     } catch (error) {
       console.error('Failed to fetch vendors:', error);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/vendors/stats`);
+      if (response.ok) {
+        const data = await response.json();
+        setStats(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    }
+  };
+
+  const filterVendors = () => {
+    let filtered = vendors;
+
+    // Search filter
+    if (searchTerm) {
+      filtered = filtered.filter(vendor => 
+        vendor.vendor_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        vendor.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        vendor.contact_person.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        vendor.email.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Country filter
+    if (selectedCountry) {
+      filtered = filtered.filter(vendor => vendor.country === selectedCountry);
+    }
+
+    // Status filter
+    if (selectedStatus) {
+      filtered = filtered.filter(vendor => vendor.status === selectedStatus);
+    }
+
+    setFilteredVendors(filtered);
   };
 
   const fetchNextVendorId = async () => {
@@ -101,18 +156,59 @@ function App() {
         if (!formData.contact_person.trim()) newErrors.contact_person = 'Contact person is required';
         if (!formData.email.trim()) newErrors.email = 'Email is required';
         if (!formData.phone.trim()) newErrors.phone = 'Phone is required';
+        
+        // Enhanced email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (formData.email && !emailRegex.test(formData.email)) {
+          newErrors.email = 'Please enter a valid email address';
+        }
+        
+        // Enhanced phone validation
+        const phoneRegex = /^\+?[\d\s\-\(\)]{7,20}$/;
+        if (formData.phone && !phoneRegex.test(formData.phone)) {
+          newErrors.phone = 'Please enter a valid phone number';
+        }
         break;
+        
       case 2:
         if (!formData.street_address.trim()) newErrors.street_address = 'Street address is required';
         if (!formData.city.trim()) newErrors.city = 'City is required';
         if (!formData.postal_code.trim()) newErrors.postal_code = 'Postal code is required';
         if (!formData.country.trim()) newErrors.country = 'Country is required';
+        
+        // Enhanced postal code validation
+        const postalPatterns = {
+          'United States': /^\d{5}(-\d{4})?$/,
+          'India': /^\d{6}$/,
+          'United Kingdom': /^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i,
+          'Canada': /^[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i,
+          'Germany': /^\d{5}$/,
+          'France': /^\d{5}$/,
+        };
+        
+        if (formData.country && postalPatterns[formData.country] && 
+            !postalPatterns[formData.country].test(formData.postal_code)) {
+          newErrors.postal_code = `Invalid postal code format for ${formData.country}`;
+        }
         break;
+        
       case 3:
         if (!formData.bank_name.trim()) newErrors.bank_name = 'Bank name is required';
         if (!formData.account_number.trim()) newErrors.account_number = 'Account number is required';
         if (!formData.iban.trim()) newErrors.iban = 'IBAN is required';
         if (!formData.bic.trim()) newErrors.bic = 'BIC is required';
+        
+        // Enhanced IBAN validation
+        const ibanRegex = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}([A-Z0-9]?){0,16}$/i;
+        if (formData.iban && !ibanRegex.test(formData.iban.replace(/\s/g, ''))) {
+          newErrors.iban = 'Invalid IBAN format';
+        }
+        
+        // Enhanced BIC validation
+        const bicRegex = /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/i;
+        if (formData.bic && !bicRegex.test(formData.bic)) {
+          newErrors.bic = 'Invalid BIC format';
+        }
         break;
     }
 
@@ -135,8 +231,14 @@ function App() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/vendors`, {
-        method: 'POST',
+      const url = editingVendor 
+        ? `${API_BASE_URL}/api/vendors/${editingVendor.vendor_id}`
+        : `${API_BASE_URL}/api/vendors`;
+      
+      const method = editingVendor ? 'PUT' : 'POST';
+      
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -145,16 +247,18 @@ function App() {
 
       if (response.ok) {
         const result = await response.json();
-        alert('Vendor created successfully!');
+        alert(editingVendor ? 'Vendor updated successfully!' : 'Vendor created successfully!');
         resetForm();
         fetchVendors();
+        fetchStats();
         setShowForm(false);
       } else {
-        alert('Failed to create vendor');
+        const error = await response.json();
+        alert(`Failed to ${editingVendor ? 'update' : 'create'} vendor: ${error.detail || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error creating vendor:', error);
-      alert('Error creating vendor');
+      console.error('Error saving vendor:', error);
+      alert('Error saving vendor');
     } finally {
       setLoading(false);
     }
@@ -183,11 +287,87 @@ function App() {
     setCurrentStep(1);
     setErrors({});
     setNextVendorId('');
+    setEditingVendor(null);
   };
 
   const startOnboarding = () => {
     setShowForm(true);
+    setEditingVendor(null);
     fetchNextVendorId();
+    resetForm();
+  };
+
+  const startEditing = (vendor) => {
+    setEditingVendor(vendor);
+    setFormData({
+      company_name: vendor.company_name,
+      contact_person: vendor.contact_person,
+      email: vendor.email,
+      phone: vendor.phone,
+      street_address: vendor.street_address,
+      city: vendor.city,
+      postal_code: vendor.postal_code,
+      country: vendor.country,
+      bank_name: vendor.bank_name,
+      account_number: vendor.account_number,
+      iban: vendor.iban,
+      bic: vendor.bic,
+      documents: vendor.documents || { gst: null, pan: null, msme: null }
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (vendorId) => {
+    if (window.confirm('Are you sure you want to delete this vendor?')) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/vendors/${vendorId}`, {
+          method: 'DELETE',
+        });
+        if (response.ok) {
+          alert('Vendor deleted successfully!');
+          fetchVendors();
+          fetchStats();
+        } else {
+          alert('Failed to delete vendor');
+        }
+      } catch (error) {
+        console.error('Error deleting vendor:', error);
+        alert('Error deleting vendor');
+      }
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (searchTerm) params.append('search', searchTerm);
+      if (selectedCountry) params.append('country', selectedCountry);
+      if (selectedStatus) params.append('status', selectedStatus);
+
+      const response = await fetch(`${API_BASE_URL}/api/vendors/export/csv?${params}`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `vendors_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      } else {
+        alert('Failed to export vendors');
+      }
+    } catch (error) {
+      console.error('Error exporting vendors:', error);
+      alert('Error exporting vendors');
+    }
+  };
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setSelectedCountry('');
+    setSelectedStatus('');
   };
 
   const renderStepIndicator = () => (
@@ -210,10 +390,19 @@ function App() {
   const renderBasicInfo = () => (
     <div className="form-section">
       <h3>Basic Information</h3>
-      <div className="vendor-id-display">
-        <label>Vendor ID (Auto-generated)</label>
-        <div className="vendor-id-value">{nextVendorId}</div>
-      </div>
+      {!editingVendor && (
+        <div className="vendor-id-display">
+          <label>Vendor ID (Auto-generated)</label>
+          <div className="vendor-id-value">{nextVendorId}</div>
+        </div>
+      )}
+      
+      {editingVendor && (
+        <div className="vendor-id-display">
+          <label>Vendor ID</label>
+          <div className="vendor-id-value">{editingVendor.vendor_id}</div>
+        </div>
+      )}
       
       <div className="form-grid">
         <div className="form-group">
@@ -362,6 +551,7 @@ function App() {
             value={formData.iban}
             onChange={handleInputChange}
             className={errors.iban ? 'error' : ''}
+            placeholder="e.g., GB82 WEST 1234 5698 7654 32"
           />
           {errors.iban && <span className="error-message">{errors.iban}</span>}
         </div>
@@ -374,6 +564,7 @@ function App() {
             value={formData.bic}
             onChange={handleInputChange}
             className={errors.bic ? 'error' : ''}
+            placeholder="e.g., DEUTDEFF"
           />
           {errors.bic && <span className="error-message">{errors.bic}</span>}
         </div>
@@ -439,7 +630,7 @@ function App() {
       <div className="review-section">
         <div className="review-group">
           <h4>Basic Information</h4>
-          <p><strong>Vendor ID:</strong> {nextVendorId}</p>
+          <p><strong>Vendor ID:</strong> {editingVendor ? editingVendor.vendor_id : nextVendorId}</p>
           <p><strong>Company:</strong> {formData.company_name}</p>
           <p><strong>Contact:</strong> {formData.contact_person}</p>
           <p><strong>Email:</strong> {formData.email}</p>
@@ -472,12 +663,83 @@ function App() {
     </div>
   );
 
+  const renderStats = () => (
+    <div className="stats-section">
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-value">{stats.total_vendors || 0}</div>
+          <div className="stat-label">Total Vendors</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{stats.active_vendors || 0}</div>
+          <div className="stat-label">Active Vendors</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{stats.recent_vendors || 0}</div>
+          <div className="stat-label">Recent (30 days)</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderFilters = () => (
+    <div className="filters-section">
+      <div className="filters-grid">
+        <div className="filter-group">
+          <label>Search Vendors</label>
+          <input
+            type="text"
+            placeholder="Search by ID, company, contact, or email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="search-input"
+          />
+        </div>
+        
+        <div className="filter-group">
+          <label>Filter by Country</label>
+          <select 
+            value={selectedCountry} 
+            onChange={(e) => setSelectedCountry(e.target.value)}
+          >
+            <option value="">All Countries</option>
+            {filterOptions.countries.map(country => (
+              <option key={country} value={country}>{country}</option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="filter-group">
+          <label>Filter by Status</label>
+          <select 
+            value={selectedStatus} 
+            onChange={(e) => setSelectedStatus(e.target.value)}
+          >
+            <option value="">All Statuses</option>
+            {filterOptions.statuses.map(status => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="filter-actions">
+          <button onClick={clearFilters} className="btn-secondary">
+            Clear Filters
+          </button>
+          <button onClick={handleExport} className="btn-secondary">
+            Export CSV
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (showForm) {
     return (
       <div className="app">
         <div className="form-container">
           <div className="form-header">
-            <h2>Vendor Onboarding</h2>
+            <h2>{editingVendor ? 'Edit Vendor' : 'Vendor Onboarding'}</h2>
             <button className="close-btn" onClick={() => {setShowForm(false); resetForm();}}>×</button>
           </div>
           
@@ -508,7 +770,7 @@ function App() {
                 onClick={handleSubmit}
                 disabled={loading}
               >
-                {loading ? 'Creating...' : 'Create Vendor'}
+                {loading ? 'Saving...' : (editingVendor ? 'Update Vendor' : 'Create Vendor')}
               </button>
             )}
           </div>
@@ -527,22 +789,46 @@ function App() {
           </button>
         </div>
 
+        {renderStats()}
+        {renderFilters()}
+
         <div className="vendors-grid">
           <div className="vendors-header">
-            <h2>Vendors ({vendors.length})</h2>
+            <h2>
+              Vendors ({filteredVendors.length} of {vendors.length})
+              {(searchTerm || selectedCountry || selectedStatus) && (
+                <span className="filter-indicator">Filtered</span>
+              )}
+            </h2>
           </div>
           
-          {vendors.length === 0 ? (
+          {loading ? (
+            <div className="loading-state">
+              <p>Loading vendors...</p>
+            </div>
+          ) : filteredVendors.length === 0 ? (
             <div className="empty-state">
-              <h3>No vendors yet</h3>
-              <p>Start by onboarding your first vendor</p>
-              <button className="btn-primary" onClick={startOnboarding}>
-                Onboard First Vendor
-              </button>
+              {vendors.length === 0 ? (
+                <>
+                  <h3>No vendors yet</h3>
+                  <p>Start by onboarding your first vendor</p>
+                  <button className="btn-primary" onClick={startOnboarding}>
+                    Onboard First Vendor
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3>No vendors match your search</h3>
+                  <p>Try adjusting your filters or search terms</p>
+                  <button className="btn-secondary" onClick={clearFilters}>
+                    Clear Filters
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="vendors-list">
-              {vendors.map((vendor) => (
+              {filteredVendors.map((vendor) => (
                 <div key={vendor.id} className="vendor-card">
                   <div className="vendor-header">
                     <h3>{vendor.company_name}</h3>
@@ -551,14 +837,30 @@ function App() {
                   <div className="vendor-details">
                     <p><strong>Contact:</strong> {vendor.contact_person}</p>
                     <p><strong>Email:</strong> {vendor.email}</p>
+                    <p><strong>Phone:</strong> {vendor.phone}</p>
                     <p><strong>Location:</strong> {vendor.city}, {vendor.country}</p>
                     <p><strong>Bank:</strong> {vendor.bank_name}</p>
                   </div>
                   <div className="vendor-status">
                     <span className={`status ${vendor.status}`}>{vendor.status}</span>
                     <span className="date">
-                      Created: {new Date(vendor.created_at).toLocaleDateString()}
+                      {vendor.updated_at ? 'Updated' : 'Created'}: {' '}
+                      {new Date(vendor.updated_at || vendor.created_at).toLocaleDateString()}
                     </span>
+                  </div>
+                  <div className="vendor-actions">
+                    <button 
+                      className="btn-edit" 
+                      onClick={() => startEditing(vendor)}
+                    >
+                      Edit
+                    </button>
+                    <button 
+                      className="btn-delete" 
+                      onClick={() => handleDelete(vendor.vendor_id)}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))}
