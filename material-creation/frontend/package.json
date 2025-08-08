@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-<<<<<<< HEAD
     "@hookform/resolvers": "^5.0.1",
     "@radix-ui/react-accordion": "^1.2.8",
     "@radix-ui/react-alert-dialog": "^1.1.11",
@@ -54,24 +53,11 @@
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2",
     "zod": "^3.24.4"
-=======
-    "axios": "^1.8.4",
-    "cra-template": "1.2.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-router-dom": "^7.5.1",
-    "react-scripts": "5.0.1"
->>>>>>> venor/main
   },
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-<<<<<<< HEAD
     "test": "craco test"
-=======
-    "test": "craco test",
-    "eject": "react-scripts eject"
->>>>>>> venor/main
   },
   "browserslist": {
     "production": [

@@ -1,16 +1,11 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-<<<<<<< HEAD
     darkMode: ["class"],
     content: [
-=======
-  content: [
->>>>>>> venor/main
     "./src/**/*.{js,jsx,ts,tsx}",
     "./public/index.html"
   ],
   theme: {
-<<<<<<< HEAD
   	extend: {
   		borderRadius: {
   			lg: 'var(--radius)',
@@ -84,9 +79,4 @@ module.exports = {
   	}
   },
   plugins: [require("tailwindcss-animate")],
-=======
-    extend: {},
-  },
-  plugins: [],
->>>>>>> venor/main
 };
